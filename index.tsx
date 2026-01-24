@@ -265,7 +265,7 @@ export default definePlugin({
             }
         },
         {
-            find: ".controlButtonWrapper,",
+            find: /toolbar:\i,mobileToolbar:\i/,
             predicate: () => settings.store.ShowLogsButton,
             replacement: {
                 match: /(function \i\(\i\){)(.{1,200}toolbar.{1,100}mobileToolbar)/,

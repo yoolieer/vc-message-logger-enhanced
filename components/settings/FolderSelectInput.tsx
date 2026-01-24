@@ -21,14 +21,14 @@ import { Button } from "@components/Button";
 import { Heading } from "@components/Heading";
 import { copyWithToast } from "@utils/discord";
 import { classes } from "@utils/misc";
-import { findByPropsLazy } from "@webpack";
+import { findCssClassesLazy } from "@webpack";
 import { Toasts } from "@webpack/common";
 
 import { Native, settings } from "../..";
 import { DEFAULT_IMAGE_CACHE_DIR } from "../../utils/constants";
 
 const cl = classNameFactory("folder-upload");
-const inputClasses = findByPropsLazy("input", "inputWrapper", "editable") as Record<string, string>;
+const inputClasses = findCssClassesLazy("input", "inputWrapper", "editable") as Record<string, string>;
 
 function createDirSelector(settingKey: "logsDir" | "imageCacheDir", successMessage: string) {
     return function DirSelector({ option }) {
