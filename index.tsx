@@ -274,11 +274,12 @@ export default definePlugin({
         },
 
         // https://regex101.com/r/JD9Qav/1
+        // MessagePreview component in LogsModal
         {
             find: "=!0,disableInteraction:",
             replacement: {
-                match: /(cozyMessage.{1,50},)childrenHeader:/,
-                replace: "$1childrenAccessories:arguments[0].childrenAccessories || null,childrenHeader:"
+                match: /childrenHeader:.{0,100}childrenMessageContent/,
+                replace: "childrenAccessories:arguments[0].childrenAccessories || null,$&"
             }
         },
 
