@@ -12,7 +12,7 @@ import { FluxDispatcher, Menu, MessageActions, React, Toasts, UserStore } from "
 import { openLogModal } from "../components/LogsModal";
 import { deleteMessageIDB } from "../db";
 import { settings } from "../index";
-import { addToXAndRemoveFromOpposite, ListType, removeFromX } from ".";
+import { addToXAndRemoveFromOpposite, ListType, parseIdList, removeFromX } from ".";
 
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
 
@@ -33,9 +33,11 @@ function renderListOption(listType: ListType, IdType: idKeys, props: any) {
 
     const ids = Array.isArray(rawId) ? rawId : [rawId];
 
-    const isBlocked = ids.every(id => settings.store[listType].includes(id));
     const oppositeListType = listType === "blacklistedIds" ? "whitelistedIds" : "blacklistedIds";
-    const isOppositeBlocked = ids.some(id => settings.store[oppositeListType].includes(id));
+    const listIds = parseIdList(settings.store[listType]);
+    const oppositeListIds = parseIdList(settings.store[oppositeListType]);
+    const isBlocked = ids.every(id => listIds.includes(id));
+    const isOppositeBlocked = ids.some(id => oppositeListIds.includes(id));
     const list = listType === "blacklistedIds" ? "Blacklist" : "Whitelist";
 
     const addToList = () => ids.forEach(id => addToXAndRemoveFromOpposite(listType, id));

@@ -11,7 +11,7 @@ import { Flex } from "@components/Flex";
 import { InfoIcon } from "@components/Icons";
 import { Link } from "@components/Link";
 import { copyWithToast, openUserProfile } from "@utils/discord";
-import { closeAllModals, ModalContent, ModalFooter, ModalHeader, ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
+import { closeAllModals, ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { LazyComponent } from "@utils/react";
 import type { Channel, User } from "@vencord/discord-types";
 import { find, findByCodeLazy } from "@webpack";
@@ -38,6 +38,10 @@ const PrivateChannelRecord = findByCodeLazy(".is_message_request_timestamp,");
 const MessagePreview = LazyComponent<MessagePreviewProps>(() => find(m => m?.type?.toString().includes("previewLinkTarget:") && !m?.type?.toString().includes("HAS_THREAD")));
 
 const cl = classNameFactory("msg-logger-modal-");
+const LogsModalRoot = ModalRoot as any;
+const LogsModalHeader = ModalHeader as any;
+const LogsModalContent = ModalContent as any;
+const LogsModalFooter = ModalFooter as any;
 
 export enum LogTabs {
     DELETED = "Deleted",
@@ -50,6 +54,11 @@ interface Props {
     initalQuery?: string;
 }
 
+type ModalProps = {
+    transitionState: number;
+    [key: string]: any;
+};
+
 export function LogsModal({ modalProps, initalQuery }: Props) {
     const [currentTab, setCurrentTab] = useState(LogTabs.DELETED);
     const [queryEh, setQuery] = useState(initalQuery ?? "");
@@ -60,8 +69,8 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
     const { messages, total, statusTotal, pending, reset } = useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
 
     return (
-        <ModalRoot className={cl("root")} {...modalProps} size={ModalSize.LARGE}>
-            <ModalHeader className={cl("header")}>
+        <LogsModalRoot className={cl("root")} {...modalProps} size={ModalSize.LARGE}>
+            <LogsModalHeader className={cl("header")}>
                 <TextInput value={queryEh} onChange={e => setQuery(e)} style={{ width: "100%" }} placeholder="Filter Messages" />
                 <TabBar
                     type="top"
@@ -94,11 +103,11 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                         Ghost Pinged
                     </TabBar.Item>
                 </TabBar>
-            </ModalHeader>
+            </LogsModalHeader>
             <div style={{ opacity: modalProps.transitionState === 1 ? "1" : "0" }} className={cl("content-container")} ref={contentRef}>
                 {
                     modalProps.transitionState === 1 &&
-                    <ModalContent
+                    <LogsModalContent
                         className={cl("content")}
                     >
                         {messages != null && total === 0 && (
@@ -118,10 +127,10 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                                 handleLoadMore={() => setNumDisplayedMessages(e => e + settings.store.messagesToDisplayAtOnceInLogs)}
                             />
                         )}
-                    </ModalContent>
+                    </LogsModalContent>
                 }
             </div>
-            <ModalFooter className={cl("footer")}>
+            <LogsModalFooter className={cl("footer")}>
                 <Button
                     variant="dangerPrimary"
                     onClick={() => Alerts.show({
@@ -174,8 +183,8 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                 >
                     Sort {sortNewest ? "Oldest First" : "Newest First"}
                 </Link>
-            </ModalFooter>
-        </ModalRoot>
+            </LogsModalFooter>
+        </LogsModalRoot>
     );
 }
 

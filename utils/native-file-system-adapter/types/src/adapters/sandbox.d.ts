@@ -1,4 +1,14 @@
 /* eslint-disable */
+interface FileEntry {
+    toURL(): string;
+}
+
+interface DirectoryEntry { }
+
+interface FileSystemDirectoryEntry extends DirectoryEntry { }
+
+interface FileWriter { }
+
 export class FileHandle {
     constructor(file: FileEntry, writable?: boolean);
     file: FileEntry;

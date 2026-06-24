@@ -7,8 +7,9 @@
 import { definePluginSettings, Settings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { OptionType } from "@utils/types";
-import { Alerts, useState } from "@webpack/common";
+import { Alerts, Forms, TextArea, Toasts, useEffect, useState } from "@webpack/common";
 
 import { Native } from ".";
 import { openLogModal } from "./components/LogsModal";
@@ -16,7 +17,14 @@ import { ImageCacheDir, LogsDir } from "./components/settings/FolderSelectInput"
 import { openUpdaterModal } from "./components/UpdaterModal";
 import { clearMessagesIDB } from "./db";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./utils/constants";
+import { compileKeywordRegexPatterns, makeExactContentRegex, normalizeKeywordRegexPatterns, parseKeywordRegexJson } from "./utils/keywordFilters";
+import { clearRepeatSuggestions, getRepeatSuggestions, removeRepeatSuggestion, RepeatSuggestion, subscribeRepeatSuggestions } from "./utils/repeatSuggestions";
 import { exportLogs, importLogs } from "./utils/settingsUtils";
+
+const RepeatSuggestionsModalRoot = ModalRoot as any;
+const RepeatSuggestionsModalHeader = ModalHeader as any;
+const RepeatSuggestionsModalContent = ModalContent as any;
+const RepeatSuggestionsModalFooter = ModalFooter as any;
 
 function ImportLogsButton() {
     const [loading, setLoading] = useState(false);
@@ -58,6 +66,151 @@ function ExportLogsButton() {
     );
 }
 
+function KeywordRegexBlacklistInput({ setValue }: { setValue(value: string[]): void; }) {
+    const { keywordRegexBlacklist } = settings.use(["keywordRegexBlacklist"]);
+    const [rawValue, setRawValue] = useState(() => JSON.stringify(normalizeKeywordRegexPatterns(keywordRegexBlacklist), null, 4));
+
+    const parsed = parseKeywordRegexJson(rawValue);
+    const regexErrors = parsed.patterns ? compileKeywordRegexPatterns(parsed.patterns).errors : [];
+
+    function handleChange(value: string) {
+        setRawValue(value);
+
+        const next = parseKeywordRegexJson(value);
+        if (next.patterns)
+            setValue(next.patterns);
+    }
+
+    return (
+        <section>
+            <Forms.FormTitle tag="h3">Keyword Regex Blacklist</Forms.FormTitle>
+            <Forms.FormText style={{ marginBottom: 8 }}>
+                JSON array of JavaScript regular expression patterns. Messages matching any valid pattern will not be logged.
+            </Forms.FormText>
+            <TextArea
+                value={rawValue}
+                onChange={handleChange}
+                placeholder={"[\"spam\", \"^ad\"]"}
+                rows={6}
+                spellCheck={false}
+            />
+            {parsed.error && (
+                <Forms.FormText style={{ marginTop: 8, color: "var(--text-feedback-critical)" }}>
+                    Invalid JSON: {parsed.error}
+                </Forms.FormText>
+            )}
+            {!parsed.error && regexErrors.length > 0 && (
+                <Forms.FormText style={{ marginTop: 8, color: "var(--text-feedback-critical)" }}>
+                    Invalid regex skipped: {regexErrors.map(error => `${error.index + 1}: ${error.error}`).join("; ")}
+                </Forms.FormText>
+            )}
+        </section>
+    );
+}
+
+function addKeywordRegexPattern(pattern: string) {
+    const patterns = normalizeKeywordRegexPatterns(settings.store.keywordRegexBlacklist);
+
+    if (patterns.includes(pattern)) {
+        Toasts.show({
+            id: Toasts.genId(),
+            type: Toasts.Type.MESSAGE,
+            message: "Keyword regex is already blacklisted."
+        });
+        return false;
+    }
+
+    settings.store.keywordRegexBlacklist = [...patterns, pattern];
+    Toasts.show({
+        id: Toasts.genId(),
+        type: Toasts.Type.SUCCESS,
+        message: "Added keyword regex blacklist entry."
+    });
+    return true;
+}
+
+function RepeatSuggestionRow({ suggestion }: { suggestion: RepeatSuggestion; }) {
+    return (
+        <div style={{ padding: "12px 0", borderTop: "1px solid var(--background-modifier-accent)" }}>
+            <Forms.FormTitle tag="h5">
+                {suggestion.count} logs - First {new Date(suggestion.firstSeenAt).toLocaleString()} - Latest {new Date(suggestion.lastSeenAt).toLocaleString()}
+            </Forms.FormTitle>
+            <pre
+                style={{
+                    background: "var(--background-secondary)",
+                    borderRadius: 4,
+                    margin: "8px 0",
+                    maxHeight: 120,
+                    overflow: "auto",
+                    padding: 8,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word"
+                }}
+            >
+                {suggestion.content}
+            </pre>
+            <div style={{ display: "flex", gap: 8 }}>
+                <Button
+                    size="small"
+                    onClick={() => {
+                        if (addKeywordRegexPattern(makeExactContentRegex(suggestion.content)))
+                            removeRepeatSuggestion(suggestion.content);
+                    }}
+                >
+                    Add Exact Match To Blacklist
+                </Button>
+                <Button
+                    size="small"
+                    variant="secondary"
+                    onClick={() => removeRepeatSuggestion(suggestion.content)}
+                >
+                    Remove
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function RepeatSuggestionsModal({ modalProps }: { modalProps: any; }) {
+    const [, forceUpdate] = useState(0);
+
+    useEffect(() => subscribeRepeatSuggestions(() => forceUpdate(Date.now())), []);
+
+    const suggestions = getRepeatSuggestions();
+
+    return (
+        <RepeatSuggestionsModalRoot {...modalProps} size={ModalSize.MEDIUM}>
+            <RepeatSuggestionsModalHeader>
+                <Forms.FormTitle tag="h3">Repeated Content History</Forms.FormTitle>
+            </RepeatSuggestionsModalHeader>
+            <RepeatSuggestionsModalContent>
+                {suggestions.length === 0
+                    ? (
+                        <Forms.FormText>
+                            No repeated logged content has reached the configured threshold in this session.
+                        </Forms.FormText>
+                    )
+                    : suggestions.map(suggestion => (
+                        <RepeatSuggestionRow key={suggestion.content} suggestion={suggestion} />
+                    ))}
+            </RepeatSuggestionsModalContent>
+            <RepeatSuggestionsModalFooter>
+                <Button
+                    variant="dangerSecondary"
+                    disabled={suggestions.length === 0}
+                    onClick={clearRepeatSuggestions}
+                >
+                    Clear History
+                </Button>
+            </RepeatSuggestionsModalFooter>
+        </RepeatSuggestionsModalRoot>
+    );
+}
+
+function openRepeatSuggestionsModal() {
+    openModal(modalProps => <RepeatSuggestionsModal modalProps={modalProps} />);
+}
+
 export const settings = definePluginSettings({
     checkForUpdate: {
         type: OptionType.COMPONENT,
@@ -75,7 +228,7 @@ export const settings = definePluginSettings({
 
     saveImages: {
         type: OptionType.BOOLEAN,
-        description: "Save deleted attachments.",
+        description: "Save attachments from deleted, edited, and ghost ping logs.",
         default: false
     },
 
@@ -89,6 +242,32 @@ export const settings = definePluginSettings({
         default: false,
         type: OptionType.BOOLEAN,
         description: "Usually message logger only logs from whitelisted ids and dms, enabling this would mean it would log messages from all servers as well. Note that this may cause the cache to exceed its limit, resulting in some messages being missed. If you are in a lot of servers, this may significantly increase the chances of messages being logged, which can result in a large message record and the inclusion of irrelevant messages.",
+    },
+
+    keywordRegexBlacklist: {
+        default: [] as string[],
+        type: OptionType.COMPONENT,
+        component: props => <KeywordRegexBlacklistInput setValue={props.setValue} />
+    },
+
+    repeatSuggestionThreshold: {
+        default: 3,
+        type: OptionType.NUMBER,
+        description: "How many times the same logged message content must appear before it is shown in the repeated content history. 0 disables this history.",
+        isValid(value) {
+            const number = Number(value);
+            return Number.isInteger(number) && number >= 0
+                ? true
+                : "Enter a whole number greater than or equal to 0.";
+        }
+    },
+
+    openRepeatSuggestions: {
+        type: OptionType.COMPONENT,
+        component: () =>
+            <Button onClick={openRepeatSuggestionsModal}>
+                Open Repeated Content History
+            </Button>
     },
 
     autoCheckForUpdates: {
@@ -204,13 +383,13 @@ export const settings = definePluginSettings({
     whitelistedIds: {
         default: "",
         type: OptionType.STRING,
-        description: "Whitelisted server, channel, or user IDs."
+        description: "Comma separated server, channel, or user IDs to always allow. Spaces around IDs are ignored."
     },
 
     blacklistedIds: {
         default: "",
         type: OptionType.STRING,
-        description: "Blacklisted server, channel, or user IDs."
+        description: "Comma separated server, channel, or user IDs to ignore. Use this for channel blacklists. Spaces around IDs are ignored."
     },
 
     imageCacheDir: {

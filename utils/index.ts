@@ -22,9 +22,11 @@ import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import { settings } from "../index";
 import { LoggedMessageJSON } from "../types";
+import { messageMatchesKeywordRegex } from "./keywordFilters";
 import { findLastIndex, getGuildIdByChannel } from "./misc";
 
 export * from "./cleanUp";
+export * from "./keywordFilters";
 export * from "./misc";
 
 
@@ -107,23 +109,23 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
 
     const ids = [authorId, channelId, guildId];
 
-    const whitelistedIds = settings.store.whitelistedIds.split(",");
+    const whitelistedIds = parseIdList(settings.store.whitelistedIds);
 
-    const isWhitelisted = settings.store.whitelistedIds.split(",").some(e => ids.includes(e));
+    const isWhitelisted = whitelistedIds.some(e => ids.includes(e));
     const isAuthorWhitelisted = whitelistedIds.includes(authorId!);
     const isChannelWhitelisted = whitelistedIds.includes(channelId!);
     const isGuildWhitelisted = whitelistedIds.includes(guildId!);
 
     const blacklistedIds = [
-        ...settings.store.blacklistedIds.split(","),
-        ...(ignoreUsers ?? []).split(","),
-        ...(ignoreChannels ?? []).split(","),
-        ...(ignoreGuilds ?? []).split(",")
+        ...parseIdList(settings.store.blacklistedIds),
+        ...parseIdList(ignoreUsers),
+        ...parseIdList(ignoreChannels),
+        ...parseIdList(ignoreGuilds)
     ];
 
     const isBlacklisted = blacklistedIds.some(e => ids.includes(e));
-    const isAuthorBlacklisted = blacklistedIds.includes(authorId);
-    const isChannelBlacklisted = blacklistedIds.includes(channelId);
+    const isAuthorBlacklisted = authorId != null && blacklistedIds.includes(authorId);
+    const isChannelBlacklisted = channelId != null && blacklistedIds.includes(channelId);
 
 
     const shouldIgnoreMutedGuilds = settings.store.ignoreMutedGuilds;
@@ -156,7 +158,18 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     return false; // keep;
 }
 
+export function shouldIgnoreMessageContent(message?: any) {
+    return messageMatchesKeywordRegex(message, settings.store.keywordRegexBlacklist);
+}
+
 export type ListType = "blacklistedIds" | "whitelistedIds";
+
+export function parseIdList(value?: string | string[] | null): string[] {
+    if (Array.isArray(value))
+        return value.map(id => id.trim()).filter(Boolean);
+
+    return (value ?? "").split(",").map(id => id.trim()).filter(Boolean);
+}
 
 export function addToXAndRemoveFromOpposite(list: ListType, id: string) {
     const oppositeListType = list === "blacklistedIds" ? "whitelistedIds" : "blacklistedIds";
@@ -166,7 +179,7 @@ export function addToXAndRemoveFromOpposite(list: ListType, id: string) {
 }
 
 export function addToX(list: ListType, id: string) {
-    const items = settings.store[list] ? settings.store[list].split(",") : [];
+    const items = parseIdList(settings.store[list]);
 
     if (!items.includes(id)) {
         items.push(id);
@@ -175,7 +188,7 @@ export function addToX(list: ListType, id: string) {
 }
 
 export function removeFromX(list: ListType, id: string) {
-    const items = settings.store[list] ? settings.store[list].split(",") : [];
+    const items = parseIdList(settings.store[list]);
     const index = items.indexOf(id);
     if (index !== -1) {
         items.splice(index, 1);

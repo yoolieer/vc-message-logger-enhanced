@@ -20,14 +20,22 @@ import { Flogger, settings } from ".";
 import { addMessageIDB, db, DBMessageStatus, deleteMessagesBulkIDB, getOldestMessagesIDB } from "./db";
 import { LoggedMessage, LoggedMessageJSON } from "./types";
 import { cleanupMessage } from "./utils";
+import { recordRepeatSuggestion } from "./utils/repeatSuggestions";
 import { cacheMessageImages } from "./utils/saveImage";
 
+function shouldCacheAttachments(status: DBMessageStatus) {
+    return status === DBMessageStatus.DELETED
+        || status === DBMessageStatus.EDITED
+        || status === DBMessageStatus.GHOST_PINGED;
+}
+
 export const addMessage = async (message: LoggedMessage | LoggedMessageJSON, status: DBMessageStatus) => {
-    if (settings.store.saveImages && status === DBMessageStatus.DELETED)
+    if (settings.store.saveImages && shouldCacheAttachments(status))
         await cacheMessageImages(message);
     const finalMessage = cleanupMessage(message);
 
     await addMessageIDB(finalMessage, status);
+    recordRepeatSuggestion(finalMessage, settings.store.repeatSuggestionThreshold);
 
     if (settings.store.messageLimit > 0) {
         const currentMessageCount = await db.count("messages");

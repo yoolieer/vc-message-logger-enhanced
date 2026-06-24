@@ -24,9 +24,9 @@ import {
     set,
 } from "@api/DataStore";
 import { sleep } from "@utils/misc";
-import { LoggedAttachment } from "userplugins/vc-message-logger-enhanced/types";
 
 import { Flogger, Native } from "../..";
+import { LoggedAttachment } from "../../types";
 import { DEFAULT_IMAGE_CACHE_DIR } from "../constants";
 
 const ImageStore = createStore("MessageLoggerImageData", "MessageLoggerImageStore");
@@ -77,8 +77,11 @@ export async function downloadAttachment(attachemnt: LoggedAttachment): Promise<
 
 export async function deleteImage(attachmentId: string): Promise<void> {
     const idbPath = idbSavedImages.get(attachmentId)?.path;
-    if (idbPath)
-        return await del(idbPath, ImageStore);
+    if (idbPath) {
+        await del(idbPath, ImageStore);
+        idbSavedImages.delete(attachmentId);
+        return;
+    }
 
 
     if (IS_WEB) return;

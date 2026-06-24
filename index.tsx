@@ -15,7 +15,7 @@ import { Devs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { FluxDispatcher, MessageStore, React, UserStore } from "@webpack/common";
+import { FluxDispatcher, MessageStore, React, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import { OpenLogsButton } from "./components/LogsButton";
 import { openLogModal } from "./components/LogsModal";
@@ -24,11 +24,12 @@ import { addMessage } from "./LoggedMessageManager";
 import * as LoggedMessageManager from "./LoggedMessageManager";
 import { settings } from "./settings";
 import { FetchMessagesResponse, LoadMessagePayload, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
-import { cleanUpCachedMessage, cleanupUserObject, getNative, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
+import { cleanUpCachedMessage, cleanupMessage, cleanupUserObject, getNative, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
 import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
-import { shouldIgnore } from "./utils/index";
+import { parseIdList, shouldIgnore, shouldIgnoreMessageContent } from "./utils/index";
 import { LimitedMap } from "./utils/LimitedMap";
 import { doesMatch } from "./utils/parseQuery";
+import { recordRepeatSuggestion } from "./utils/repeatSuggestions";
 import * as imageUtils from "./utils/saveImage";
 import * as ImageManager from "./utils/saveImage/ImageManager";
 import { checkForUpdatesAndNotify } from "./utils/updater";
@@ -43,6 +44,29 @@ const cacheThing = findByPropsLazy("commit", "getOrCreate");
 let oldGetMessage: typeof MessageStore.getMessage;
 
 const handledMessageIds = new Set();
+
+function clearMessageEditHistory(channelId?: string, messageId?: string) {
+    if (!channelId || !messageId) return;
+
+    const cache = cacheThing.getOrCreate(channelId);
+    const message = cache.get(messageId);
+    if (message) {
+        message.editHistory = [];
+        cacheThing.commit(cache);
+    }
+}
+
+function makeDeletedMessageSnapshot(message: LoggedMessage | LoggedMessageJSON) {
+    const deletedMessage = cleanupMessage(message, false);
+    deletedMessage.deleted = true;
+    deletedMessage.attachments = (deletedMessage.attachments ?? []).map(attachment => ({
+        ...attachment,
+        deleted: true
+    }));
+
+    return deletedMessage;
+}
+
 async function messageDeleteHandler(payload: MessageDeletePayload & { isBulk: boolean; }) {
     if (payload.mlDeleted) return;
 
@@ -64,17 +88,28 @@ async function messageDeleteHandler(payload: MessageDeletePayload & { isBulk: bo
             message = { ...cacheSentMessages.get(`${payload.channelId},${payload.id}`), deleted: true } as LoggedMessageJSON;
         }
 
-        const ghostPinged = isGhostPinged(message as any);
+        const deletedMessage = makeDeletedMessageSnapshot(message);
+
+        if (shouldIgnoreMessageContent(deletedMessage)) {
+            return FluxDispatcher.dispatch({
+                type: "MESSAGE_DELETE",
+                channelId: payload.channelId,
+                id: payload.id,
+                mlDeleted: true
+            });
+        }
+
+        const ghostPinged = isGhostPinged(deletedMessage as any);
 
         if (
             shouldIgnore({
-                channelId: message?.channel_id ?? payload.channelId,
-                guildId: payload.guildId ?? (message as any).guildId ?? (message as any).guild_id,
-                authorId: message?.author?.id,
-                bot: message?.bot || message?.author?.bot,
-                flags: message?.flags,
+                channelId: deletedMessage?.channel_id ?? payload.channelId,
+                guildId: payload.guildId ?? deletedMessage.guildId ?? deletedMessage.guild_id,
+                authorId: deletedMessage?.author?.id,
+                bot: deletedMessage?.bot || deletedMessage?.author?.bot,
+                flags: deletedMessage?.flags,
                 ghostPinged,
-                isCachedByUs: (message as LoggedMessageJSON).ourCache
+                isCachedByUs: deletedMessage.ourCache
             })
         ) {
             // Flogger.log("IGNORING", message, payload);
@@ -87,12 +122,12 @@ async function messageDeleteHandler(payload: MessageDeletePayload & { isBulk: bo
         }
 
 
-        if (message == null || message.channel_id == null || !message.deleted) return;
+        if (deletedMessage.channel_id == null) return;
         // Flogger.log("ADDING MESSAGE (DELETED)", message);
         if (payload.isBulk)
-            return message;
+            return deletedMessage;
 
-        await addMessage(message, ghostPinged ? idb.DBMessageStatus.GHOST_PINGED : idb.DBMessageStatus.DELETED);
+        await addMessage(deletedMessage, ghostPinged ? idb.DBMessageStatus.GHOST_PINGED : idb.DBMessageStatus.DELETED);
     }
     finally {
         handledMessageIds.delete(payload.id);
@@ -108,10 +143,16 @@ async function messageDeleteBulkHandler({ channelId, guildId, ids }: MessageDele
     }
 
     await idb.addMessagesBulkIDB(messages);
+    messages.forEach(message => recordRepeatSuggestion(message, settings.store.repeatSuggestionThreshold));
 }
 
 async function messageUpdateHandler(payload: MessageUpdatePayload) {
     const cachedMessage = cacheSentMessages.get(`${payload.message.channel_id},${payload.message.id}`);
+    if (shouldIgnoreMessageContent(payload.message) || shouldIgnoreMessageContent(cachedMessage)) {
+        clearMessageEditHistory(payload.message.channel_id, payload.message.id);
+        return;
+    }
+
     if (
         shouldIgnore({
             channelId: payload.message?.channel_id,
@@ -123,12 +164,7 @@ async function messageUpdateHandler(payload: MessageUpdatePayload) {
             isCachedByUs: cachedMessage?.ourCache ?? false
         })
     ) {
-        const cache = cacheThing.getOrCreate(payload.message.channel_id);
-        const message = cache.get(payload.message.id);
-        if (message) {
-            message.editHistory = [];
-            cacheThing.commit(cache);
-        }
+        clearMessageEditHistory(payload.message.channel_id, payload.message.id);
         return;//  Flogger.log("this message has been ignored", payload);
     }
 
@@ -154,20 +190,30 @@ async function messageUpdateHandler(payload: MessageUpdatePayload) {
     }
 
     if (message == null || message.channel_id == null || message.editHistory == null || message.editHistory.length === 0) return;
+    if (shouldIgnoreMessageContent(message)) {
+        clearMessageEditHistory(message.channel_id, message.id);
+        return;
+    }
 
     // Flogger.log("ADDING MESSAGE (EDITED)", message, payload);
     await addMessage(message, idb.DBMessageStatus.EDITED);
 }
 
 function messageCreateHandler(payload: MessageCreatePayload) {
+    if (shouldIgnoreMessageContent(payload.message)) return;
+
     // we do this here because cache is limited and to save memory
     if (!settings.store.cacheMessagesFromServers && payload.guildId != null) {
         const ids = [payload.channelId, payload.message?.author?.id, payload.guildId];
+        const shouldCacheCurrentChannel =
+            settings.store.alwaysLogCurrentChannel &&
+            SelectedChannelStore.getChannelId() === payload.channelId;
+
         const isWhitelisted =
-            settings.store.whitelistedIds
-                .split(",")
+            parseIdList(settings.store.whitelistedIds)
                 .some(e => ids.includes(e));
-        if (!isWhitelisted) {
+
+        if (!isWhitelisted && !shouldCacheCurrentChannel) {
             return; // dont cache messages from servers when cacheMessagesFromServers is disabled and not whitelisted.
         }
     }

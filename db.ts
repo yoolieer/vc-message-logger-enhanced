@@ -8,7 +8,7 @@ import { LoggedMessageJSON } from "./types";
 import { getMessageStatus } from "./utils";
 import { DB_NAME, DB_VERSION } from "./utils/constants";
 import { DBSchema, IDBPDatabase, openDB } from "./utils/idb";
-import { getAttachmentBlobUrl } from "./utils/saveImage";
+import { deleteMessageImages, getAttachmentBlobUrl, restoreExternalAttachmentUrl } from "./utils/saveImage";
 
 export enum DBMessageStatus {
     DELETED = "DELETED",
@@ -50,6 +50,8 @@ async function cacheRecords(records: DBMessageRecord[]) {
             if (blobUrl) {
                 att.url = blobUrl + "#";
                 att.proxy_url = blobUrl + "#";
+            } else {
+                restoreExternalAttachmentUrl(att);
             }
         }
     }
@@ -61,6 +63,28 @@ async function cacheRecord(record?: DBMessageRecord | null) {
 
     cachedMessages.set(record.message_id, record.message);
     return record;
+}
+
+async function getRecordsByIds(messageIds: string[]) {
+    const tx = db.transaction("messages", "readonly");
+    const { store } = tx;
+
+    const records = await Promise.all(messageIds.map(id => store.get(id)));
+    await tx.done;
+
+    return records;
+}
+
+async function deleteCachedImagesForRecords(records: Array<DBMessageRecord | undefined | null>) {
+    await Promise.all(records.map(async record => {
+        if (!record?.message?.attachments?.length) return;
+
+        try {
+            await deleteMessageImages(record.message);
+        } catch (error) {
+            console.error("Failed to delete cached message images", error);
+        }
+    }));
 }
 
 export async function initIDB() {
@@ -204,20 +228,28 @@ export async function addMessagesBulkIDB(messages: LoggedMessageJSON[], status?:
 
 
 export async function deleteMessageIDB(message_id: string) {
+    const record = await db.get("messages", message_id);
+
     await db.delete("messages", message_id);
 
     cachedMessages.delete(message_id);
+    await deleteCachedImagesForRecords([record]);
 }
 
 export async function deleteMessagesBulkIDB(message_ids: string[]) {
+    const records = await getRecordsByIds(message_ids);
     const tx = db.transaction("messages", "readwrite");
     const { store } = tx;
 
     await Promise.all([...message_ids.map(id => store.delete(id)), tx.done]);
     message_ids.forEach(id => cachedMessages.delete(id));
+    await deleteCachedImagesForRecords(records);
 }
 
 export async function clearMessagesIDB() {
+    const records = await db.getAll("messages");
+
     await db.clear("messages");
     cachedMessages.clear();
+    await deleteCachedImagesForRecords(records);
 }

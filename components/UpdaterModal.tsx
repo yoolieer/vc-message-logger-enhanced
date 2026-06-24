@@ -15,7 +15,7 @@ import { Link } from "@components/Link";
 import { Paragraph } from "@components/Paragraph";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
-import { ModalContent, ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
+import { ModalContent, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { useAwaiter, useForceUpdater } from "@utils/react";
 import { React, Toasts, useState } from "@webpack/common";
 
@@ -51,6 +51,14 @@ export function UpdateErrorCard({ updateError, title }: { updateError: GitError;
 }
 
 const cl = classNameFactory("vc-updater-modal-");
+const UpdaterModalRoot = ModalRoot as any;
+const UpdaterModalContent = ModalContent as any;
+
+type ModalProps = {
+    transitionState: number;
+    [key: string]: any;
+};
+
 export function UpdaterModal({ modalProps }: { modalProps: ModalProps; }) {
     const forceUpdate = useForceUpdater();
     const [isUpdating, setIsUpdating] = useState(false);
@@ -81,8 +89,8 @@ export function UpdaterModal({ modalProps }: { modalProps: ModalProps; }) {
     }
 
     return (
-        <ModalRoot {...modalProps} size={ModalSize.LARGE}>
-            <ModalContent className={cl("content")}>
+        <UpdaterModalRoot {...modalProps} size={ModalSize.LARGE}>
+            <UpdaterModalContent className={cl("content")}>
                 <Heading tag="h5">Repo</Heading>
                 {!repoPending && repoInfo != null && err == null && (
                     <>
@@ -141,8 +149,8 @@ export function UpdaterModal({ modalProps }: { modalProps: ModalProps; }) {
                     {isOutdated && <Button disabled={isUpdating} onClick={onUpdate}>Update</Button>}
                     <Button disabled={isUpdating} onClick={onCheck}>Check for updates</Button>
                 </Flex>
-            </ModalContent>
-        </ModalRoot>
+            </UpdaterModalContent>
+        </UpdaterModalRoot>
     );
 }
 

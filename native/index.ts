@@ -8,7 +8,7 @@ import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DATA_DIR } from "@main/utils/constants";
-import { dialog, IpcMainInvokeEvent, shell } from "electron";
+import { dialog, IpcMainInvokeEvent, net, shell } from "electron";
 
 import { getSettings, saveSettings } from "./settings";
 export * from "./export";
@@ -17,6 +17,7 @@ export * from "./updater";
 
 import { LoggedAttachment } from "../types";
 import { LOGS_DATA_FILENAME } from "../utils/constants";
+import { getExtensionFromBytes, getExtensionFromMimeType, normalizeExtension } from "../utils/fileTypes";
 import { ensureDirectoryExists, getAttachmentIdFromFilename, sleep } from "./utils";
 
 export { getSettings };
@@ -89,7 +90,14 @@ export async function deleteFileNative(_event: IpcMainInvokeEvent, attachmentId:
     const imagePath = nativeSavedImages.get(attachmentId);
     if (!imagePath) return;
 
-    await unlink(imagePath);
+    try {
+        await unlink(imagePath);
+    } catch (error: any) {
+        if (error?.code !== "ENOENT")
+            throw error;
+    } finally {
+        nativeSavedImages.delete(attachmentId);
+    }
 }
 
 
@@ -163,7 +171,7 @@ export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt:
                 path: existingImage
             };
 
-        const res = await fetch(useOldUrl ? attachemnt.oldUrl : attachemnt.url);
+        const res = await net.fetch(useOldUrl ? attachemnt.oldUrl : attachemnt.url);
 
         if (res.status !== 200) {
             if (res.status === 404 || res.status === 403 || res.status === 415)
@@ -182,11 +190,16 @@ export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt:
         }
 
         const ab = await res.arrayBuffer();
+        const attachmentBuffer = Buffer.from(ab);
+        const fileExtension = getExtensionFromBytes(attachmentBuffer)
+            ?? getExtensionFromMimeType(res.headers.get("content-type"))
+            ?? normalizeExtension(attachemnt.fileExtension)
+            ?? ".png";
         const imageCacheDir = await getImageCacheDir();
         await ensureDirectoryExists(imageCacheDir);
 
-        const finalPath = path.join(imageCacheDir, `${attachemnt.id}${attachemnt.fileExtension}`);
-        await writeFile(finalPath, Buffer.from(ab));
+        const finalPath = path.join(imageCacheDir, `${attachemnt.id}${fileExtension}`);
+        await writeFile(finalPath, attachmentBuffer);
 
         nativeSavedImages.set(attachemnt.id, finalPath);
 
@@ -196,6 +209,12 @@ export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt:
         };
 
     } catch (error: any) {
+        attempts++;
+        if (attempts <= 3) {
+            await sleep(1000);
+            return downloadAttachment(_event, attachemnt, attempts, useOldUrl);
+        }
+
         console.error(error);
         return { error: error.message, path: null };
     }

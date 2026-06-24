@@ -15,7 +15,9 @@ The plugin saves messages to a json file, and can restore them after reloading D
     -   Search logs by channel ID, user ID, server ID, and message ID.
     -   Ghost Pinged tab to track and view ghost pings.
 -   Set a message limit to manage the number of saved logs (settings).
--   Blacklist servers, channels, and users to prevent logging specific content.
+-   Blacklist servers, channels, and users by ID to prevent logging specific content.
+-   Blacklist message content with JavaScript regular expression patterns.
+-   Track repeated logged content during the current session and add exact matches to the keyword regex blacklist.
 -   Whitelist feature to selectively allow logging for specific servers, channels, or users.
 -   Whitelist overrides server blacklist, allowing logging of whitelisted users' actions in blacklisted servers and channels.
 -   Export logs for backup and analysis purposes.
@@ -33,6 +35,15 @@ tutorial: https://youtu.be/8wexjSo8fNw
 https://github.com/Syncxv/vc-message-logger-enhanced/assets/47534062/31be3fcb-71db-4714-9d94-99b340371e96
 
 # Changelog
+
+## Unreleased
+- Added a keyword regex blacklist. Matching deleted or edited messages are not cached or logged.
+- Added a current-session repeated content history with a configurable threshold.
+- Fixed attachment caching for edited and ghost ping logs, and switched native attachment downloads to Electron net fetch so Discord CDN requests can use the app proxy.
+- Logged attachments now keep their original Discord URLs as a fallback when the local cached file is unavailable.
+- Deleted logs now clean up their cached attachments automatically, including manual, bulk, clear-all, and message-limit cleanup.
+- Clarified that channel blacklisting is handled through the comma-separated `blacklistedIds` setting.
+- Normalized ID list parsing so spaces around comma-separated IDs are ignored.
 
 ## 4.0.0
 - Moved from JSON to IndexedDB

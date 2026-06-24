@@ -20,11 +20,20 @@ import { MessageAttachment } from "@vencord/discord-types";
 
 import { Flogger, settings } from "../..";
 import { LoggedAttachment, LoggedMessage, LoggedMessageJSON } from "../../types";
+import { getMimeTypeFromBytes, getMimeTypeFromExtension, isBrowserUnsupportedImageMimeType } from "../fileTypes";
 import { memoize } from "../memoize";
 import { deleteImage, downloadAttachment, getImage, } from "./ImageManager";
 
 export function getFileExtension(str: string) {
-    const matches = str.match(/(\.[a-zA-Z0-9]+)(?:\?.*)?$/);
+    let pathname = str;
+
+    try {
+        pathname = new URL(str).pathname;
+    } catch {
+        pathname = str.split(/[?#]/)[0];
+    }
+
+    const matches = pathname.match(/(\.[a-zA-Z0-9]+)$/);
     if (!matches) return null;
 
     return matches[1];
@@ -40,11 +49,15 @@ export function isAttachmentGoodToCache(attachment: MessageAttachment, fileExten
     if (attachmentFileExtensionsStr === "")
         return true;
 
-    const allowedFileExtensions = attachmentFileExtensionsStr.split(",");
+    const allowedFileExtensions = attachmentFileExtensionsStr
+        .split(",")
+        .map(extension => extension.trim().replace(/^\./, "").toLowerCase())
+        .filter(Boolean);
 
     if (fileExtension.startsWith(".")) {
         fileExtension = fileExtension.slice(1);
     }
+    fileExtension = fileExtension.toLowerCase();
 
     if (!fileExtension || !allowedFileExtensions.includes(fileExtension)) {
         Flogger.log("Attachment not in allowed file extensions", attachment.filename);
@@ -86,6 +99,7 @@ export async function cacheMessageImages(message: LoggedMessage | LoggedMessageJ
             }
 
             attachment.path = path;
+            attachment.fileExtension = getFileExtension(path) ?? attachment.fileExtension;
         }
 
     } catch (error) {
@@ -100,11 +114,31 @@ export async function deleteMessageImages(message: LoggedMessage | LoggedMessage
     }
 }
 
+export function restoreExternalAttachmentUrl(attachment: LoggedAttachment) {
+    if (attachment.oldUrl)
+        attachment.url = attachment.oldUrl;
+
+    if (attachment.oldProxyUrl)
+        attachment.proxy_url = attachment.oldProxyUrl;
+    else if (attachment.oldUrl)
+        attachment.proxy_url = attachment.oldUrl;
+}
+
 export const getAttachmentBlobUrl = memoize(async (attachment: LoggedAttachment) => {
     const imageData = await getImage(attachment.id, attachment.fileExtension);
     if (!imageData) return null;
 
-    const blob = new Blob([imageData]);
+    const mimeType = getMimeTypeFromBytes(imageData)
+        ?? getMimeTypeFromExtension(attachment.fileExtension)
+        ?? attachment.content_type?.split(";")?.[0]?.trim()?.toLowerCase()
+        ?? null;
+
+    if (isBrowserUnsupportedImageMimeType(mimeType)) {
+        Flogger.warn("Cached attachment is not browser-displayable; using original Discord URL fallback", attachment.id, mimeType);
+        return null;
+    }
+
+    const blob = new Blob([imageData], mimeType ? { type: mimeType } : undefined);
     const resUrl = URL.createObjectURL(blob);
 
     return resUrl;
